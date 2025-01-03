@@ -230,4 +230,6 @@ end
 --:echo nvim_get_current_buf(), README.md
 -- M.start_presentation { bufnr = 32 }
 
+M._parse_slides = parse_slides
+
 return M
