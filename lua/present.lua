@@ -1,7 +1,63 @@
 local M = {}
 
-M.setup = function()
-    -- nothing
+--- Default executor for lua code
+---@param block present.Block
+local execute_lua_code = function(block)
+    -- store the original print function
+    local original_print = print
+
+
+    local output = {}
+    -- redefine the print function
+    print = function(...)
+        local args = { ... }
+        local message = table.concat(vim.tbl_map(tostring, args), "\t")
+        table.insert(output, message)
+    end
+
+    -- call the provided function
+    local chunk = loadstring(block.body)
+    pcall(function()
+        if not chunk then
+            table.insert(output, "<<<BROKEN CODE>>>")
+        else
+            chunk()
+        end
+
+        return output
+    end)
+
+    -- restore the original print
+    print = original_print
+    return output
+end
+
+M.create_system_executor = function(program)
+    return function(block)
+        local tempfile = vim.fn.tempname()
+        vim.fn.writefile(vim.split(block.body, "\n"), tempfile)
+        local result = vim.system({ program, tempfile }, { text = true }):wait()
+        return vim.split(result.stdout, "\n")
+    end
+end
+
+local options = {
+    executors = {
+        lua = execute_lua_code,
+        javascript = M.create_system_executor "node",
+        python = M.create_system_executor "python",
+    }
+}
+
+M.setup = function(opts)
+    opts = opts or {}
+    opts.executors = opts.executors or {}
+
+    opts.executors.lua = opts.executors.lua or execute_lua_code
+    opts.executors.javascript = opts.executors.lua or M.create_system_executor "node"
+    opts.executors.python = opts.executors.lua or M.create_system_executor "python"
+
+    options = opts
 end
 
 local function create_floating_window(config, enter)
@@ -215,33 +271,21 @@ M.start_presentation = function(opts)
             return
         end
 
-        -- store the original print function
-        local original_print = print
-        local output = { "", "# Code", "", "```" .. block.language }
+        local executor = options.executors[block.language]
+        if not executor then
+            print("No valid executor for this language")
+        end
+
+        local output = { "# Code", "", "```" .. block.language }
         vim.list_extend(output, vim.split(block.body, "\n"))
         table.insert(output, "```")
 
-        -- redefine the print function
-        print = function(...)
-            local args = { ... }
-            local message = table.concat(vim.tbl_map(tostring, args), "\t")
-            table.insert(output, message)
-        end
-
-        -- call the provided function
-        local chunk = loadstring(block.body)
-        pcall(function()
-            table.insert(output, "")
-            table.insert(output, "# Output")
-            table.insert(output, "")
-            if not chunk then
-                table.insert(outay, "<<<BROKEN CODE>>>")
-            else
-                chunk()
-            end
-        end)
-
-        print = original_print
+        table.insert(output, "")
+        table.insert(output, "# Output")
+        table.insert(output, "")
+        table.insert(output, "```")
+        vim.list_extend(output, executor(block))
+        table.insert(output, "```")
 
         local buf = vim.api.nvim_create_buf(false, true)
         local temp_width = math.floor(vim.o.columns * 0.8)
